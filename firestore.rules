@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin()  { return signedIn() && request.auth.token.email == 'admin@banaeem.app'; }
+
+    // الطلبيات: الكل يقرأ ويحدّث الحالة، الإضافة والحذف للمدير فقط
+    match /orders/{id} {
+      allow read, update: if signedIn();
+      allow create, delete: if isAdmin();
+    }
+    // المرفقات (عروض الأسعار): الكل يقرأ، المدير فقط يرفع
+    match /files/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}
