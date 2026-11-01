@@ -13,6 +13,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="config.js"></script>
 <style>
 /* Layout: work-desk tool — sticky header with search, stage strip, tabbed views, order detail panel */
@@ -172,7 +173,7 @@ a{color:var(--accent)}
     </div>
     <div class="grow search">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="q" type="text" placeholder="ابحث برقم القطعة أو رقم الويب أو العميل…" autocomplete="off" aria-label="بحث">
+      <input id="q" type="text" placeholder="ابحث برقم القطعة أو الويب أو الفاتورة أو العميل…" autocomplete="off" aria-label="بحث">
     </div>
     <div class="userchip"><span>مسجّل كـ <b id="whoami"></b></span><button class="ghost mini" id="logout">خروج</button></div>
   </div>
@@ -348,7 +349,7 @@ function runCheck(){
 }
 function renderSearch(m){
   const t=keyPN(q), tl=q.trim(), tw=normWeb(q);
-  const ol=orders.filter(o=>normWeb(o.web).includes(tw)||(tl&&(o.customer||"").includes(tl)));
+  const ol=orders.filter(o=>normWeb(o.web).includes(tw)||(tl.length>=5&&((o.agencyInvoice||{}).no||"").includes(tl))||(tl&&(o.customer||"").includes(tl)));
   const hits=[]; orders.forEach(o=>(o.items||[]).forEach((it,i)=>{const p=keyPN(it.pn); if((t&&p.includes(t))||baseA(p)===baseA(t)||(tl&&(it.cust||"").includes(tl))) hits.push({o,it,i})}));
   m.innerHTML=`<div class="panel"><div class="toolbar"><b>نتائج البحث عن <span class="pn">${esc(q)}</span></b><span class="spacer"></span><button class="ghost" id="clrQ">مسح البحث</button></div>
    ${ol.length?`<div class="tbl-wrap"><table><thead><tr><th>رقم الويب</th><th>النوع</th><th>العميل</th><th>التاريخ</th><th>القطع</th><th>الكمية</th><th>الإجمالي</th><th>الحالة</th><th>الوصول المتوقع</th><th>الخطوة التالية</th></tr></thead><tbody>${ol.map(orderRow).join("")}</tbody></table></div>`:""}
@@ -371,14 +372,14 @@ function renderNew(m){
      <label class="f" for="nExp">تاريخ الوصول المتوقع<input id="nExp" type="date" value="${esc(draft.expected)}"></label>
      <label class="f" for="nNote">ملاحظة<input id="nNote" type="text" value="${esc(draft.note)}" placeholder="اختياري"></label>
    </div>
-   ${dupWeb?`<div class="banner">رقم الويب هذا مستخدم في طلبية ثانية.</div>`:""}
-   <div class="dropzone" id="dz">اسحب ملف Excel الطلبية هنا أو <label style="color:var(--accent);cursor:pointer;text-decoration:underline">اختر ملف<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
-     <div class="hint" style="margin-top:4px">يقرأ رقم القطعة والاسم والكمية والسعر والعميل إن وجدت</div></div>
+   ${dupWeb?`<div class="banner row">رقم الويب هذا موجود بطلبية ثانية.${draft.items.length?` <button class="mini" id="applyToExisting">طبّق الملف على الطلبية الموجودة</button>`:""}</div>`:""}
+   <div class="dropzone" id="dz">اسحب ملف الطلبية أو الفاتورة هنا (PDF أو Excel) أو <label style="color:var(--accent);cursor:pointer;text-decoration:underline">اختر ملف<input id="file" type="file" accept=".pdf,.xlsx,.xls,.csv" hidden></label>
+     <div class="hint" style="margin-top:4px">يطلّع رقم الويب ورقم الفاتورة والقطع بأسمائها وكمياتها وأسعارها بعد الخصم</div></div>
    <label class="f" for="paste">أو الصق من Excel: رقم القطعة ⇥ الاسم ⇥ الكمية ⇥ السعر
      <textarea id="paste" placeholder="15208-65F0E&#9;فلتر زيت&#9;20&#10;27277-4M400A&#9;فلتر مكيف&#9;10"></textarea></label>
    <div class="row"><button id="addPaste">أضف الملصوق</button><button class="ghost" id="addRow">+ سطر يدوي</button></div>
    <div id="draftTbl"></div>
-   <div class="row"><span class="sub">عرض سعر الوكالة:</span>${draft.quotes.map(f=>`${fileLink(f)}`).join(" · ")||`<span class="sub">ما فيه مرفق</span>`}
+   <div class="row"><span class="sub">ملفات الوكالة:</span>${draft.quotes.map(f=>`${fileLink(f)}`).join(" · ")||`<span class="sub">ما فيه مرفق</span>`}
      ${assets?`<label class="mini" style="color:var(--accent);cursor:pointer;text-decoration:underline">إرفاق ملف<input id="qFileNew" type="file" accept=".pdf,image/*,.xlsx,.xls,.csv" hidden></label>`:""}</div>
    <div class="row"><span class="spacer"></span><button class="ghost" id="resetDraft">تفريغ</button><button class="primary" id="saveNew">حفظ الطلبية (طلب تسعير)</button></div></div>`;
   $("#nKind").value=draft.kind; renderDraftTbl(); syncSave();
@@ -444,7 +445,7 @@ async function renderDrawer(){
         <label class="f" for="eExp">الوصول المتوقع<input id="eExp" type="date" value="${esc(o.expected||"")}"></label>
         <label class="f" for="eNote">ملاحظة<input id="eNote" type="text" value="${esc(o.note||"")}"></label></div>`
       :`<div class="row" style="gap:6px 18px"><span class="sub">العميل: <b>${esc(o.customer||"—")}</b></span><span class="sub">الوصول المتوقع: <b class="num">${o.expected?fmtDay(o.expected):"—"}</b></span><span class="sub">أُنشئت: <span class="num">${fmtDay(o.createdAt)}</span></span>${o.note?`<span class="sub">ملاحظة: ${esc(o.note)}</span>`:""}</div>`}
-      <div class="row"><span class="sub">عرض سعر الوكالة:</span>${(o.quotes||[]).map(f=>`${fileLink(f)}`).join(" · ")||`<span class="sub">ما فيه مرفق</span>`}
+      <div class="row"><span class="sub">ملفات الوكالة:</span>${(o.quotes||[]).map(f=>`${fileLink(f)}`).join(" · ")||`<span class="sub">ما فيه مرفق</span>`}
         ${owner&&assets&&canWrite?`<label class="mini" style="color:var(--accent);cursor:pointer;text-decoration:underline">إرفاق ملف<input id="qFile" type="file" accept=".pdf,image/*,.xlsx,.xls,.csv" hidden></label>`:""}</div>
     </div>
     <div class="tbl-wrap panel"><table><thead><tr><th>رقم القطعة</th><th>الاسم</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th><th>الواصل</th>${canBatch?`<th>هذي الدفعة</th>`:""}<th></th></tr></thead><tbody>
@@ -467,7 +468,11 @@ async function renderDrawer(){
        <div class="sub">${(s.lines||[]).map(l=>`<span class="pn">${esc((its[l.i]||{}).pn)}</span> × ${l.qty}`).join(" · ")}</div>
        ${!s.enteredAt&&(role==="entry"||owner)&&canWrite?`<div class="row"><input type="text" id="inv-${si}" placeholder="رقم فاتورة الشراء بالنظام" style="max-width:240px"><button class="primary mini" data-enter="${si}">دخلت النظام</button></div>`:""}
        ${s.enteredAt?`<div class="sub">أدخلها ${who(s.enteredBy)} <span class="num">${fmtD(s.enteredAt)}</span></div>`:""}</div>`).join("")}</div>`:""}
-    ${editMain&&canWrite?quoteBox(o):""}
+    ${o.agencyInvoice?`<div class="panel sec" style="gap:6px"><h2>فاتورة الوكالة</h2><div class="row" style="gap:6px 18px">
+      <span class="sub">رقم الفاتورة: <b class="num">${esc(o.agencyInvoice.no)}</b></span>${o.agencyInvoice.date?`<span class="sub">التاريخ: <b class="num">${esc(o.agencyInvoice.date)}</b></span>`:""}
+      ${o.agencyInvoice.parts!=null?`<span class="sub">قبل الضريبة: <b class="num">${money(o.agencyInvoice.parts)}</b></span>`:""}${o.agencyInvoice.vat!=null?`<span class="sub">الضريبة: <b class="num">${money(o.agencyInvoice.vat)}</b></span>`:""}
+      ${o.agencyInvoice.net!=null?`<span class="sub">الصافي: <b class="num">${money(o.agencyInvoice.net)}</b></span>`:""}</div></div>`:""}
+    ${canWrite&&((owner&&OPEN.has(o.status))||(role==="entry"&&["confirmed","partial","arrived"].includes(o.status)))?quoteBox(o):""}
     <div class="panel sec" id="acts">${actionsHtml(o,{editMain,canBatch})}</div>
     <div class="panel sec"><h2>سجل الحركة</h2><ul class="log">
       ${(o.history||[]).slice().reverse().map(h=>`<li><time>${fmtD(h.at)}</time>${h.s?pill(h.s):""}<span class="sub">${esc(ROLE_T[h.role]||"")}</span>${who(h.by)}${h.note?`<span class="sub">— ${esc(h.note)}</span>`:""}</li>`).join("")}
@@ -476,19 +481,21 @@ async function renderDrawer(){
 }
 function quoteBox(o){
   const pq=pendingQuote&&pendingQuote.oid===o.id?pendingQuote:null;
-  if(!pq) return `<div class="panel sec"><h2>تسعيرة الوكالة</h2>
-    <p class="hint">ارفع ملف Excel التسعيرة كما يجي من الوكالة (Part # · Qty · u/Price). البرنامج يطابقه مع الطلبية ويعبّي الأسعار، ويوريك القطع اللي ما تسعّرت أو تغيّرت كميتها قبل التطبيق.</p>
-    <div class="row"><label class="primary" style="cursor:pointer;background:var(--accent);color:var(--accent-fg);padding:7px 14px;border-radius:6px;font-weight:500">رفع ملف التسعيرة<input id="quoteXls" type="file" accept=".xlsx,.xls,.csv" hidden></label></div></div>`;
-  const r=pq.res;
+  if(!pq) return `<div class="panel sec"><h2>تسعيرة أو فاتورة الوكالة</h2>
+    <p class="hint">ارفع ملف الوكالة كما يجي (PDF أو Excel). البرنامج يطابقه مع الطلبية ويعبّي الأسعار بعد الخصم والأسماء، ويوريك القطع اللي ما جت أو تغيّرت كميتها قبل التطبيق. لو الملف فاتورة ينحفظ رقمها وإجمالياتها.</p>
+    <div class="row"><label class="primary" style="cursor:pointer;background:var(--accent);color:var(--accent-fg);padding:7px 14px;border-radius:6px;font-weight:500">رفع ملف الوكالة<input id="quoteXls" type="file" accept=".pdf,.xlsx,.xls,.csv" hidden></label></div></div>`;
+  const r=pq.res, m=pq.meta||{}, isInv=m.kind==="invoice", L=isInv?"الفاتورة":"التسعيرة";
+  const webWarn=m.web&&normWeb(m.web)!==normWeb(o.web)?`<div class="banner">رقم الويب بالملف <b class="num">${esc(m.web)}</b> يختلف عن رقم هذي الطلبية <b class="num">${esc(o.web)}</b> — تأكد إنك على الطلبية الصحيحة.</div>`:"";
   const li=(arr,f)=>arr.length?`<div class="sub" style="line-height:1.9">${arr.map(f).join(" · ")}</div>`:"";
-  return `<div class="panel sec"><h2>مراجعة التسعيرة: ${esc(pq.name)}</h2>
-    <div class="row"><span class="flag ok">تسعّرت ${r.matched.length}</span>${r.qtyChg.length?`<span class="flag warn">الكمية تغيّرت ${r.qtyChg.length}</span>`:""}${r.missing.length?`<span class="flag bad">ما تسعّرت ${r.missing.length}</span>`:""}${r.extra.length?`<span class="flag info">زيادة بالتسعيرة ${r.extra.length}</span>`:""}
-      <span class="sub">إجمالي التسعيرة: <b class="num">${money(r.total)}</b></span></div>
+  return `<div class="panel sec"><h2>مراجعة ${L}: ${esc(pq.name)}</h2>${webWarn}
+    ${isInv?`<div class="row" style="gap:6px 18px"><span class="sub">رقم الفاتورة: <b class="num">${esc(m.invoiceNo||"—")}</b></span><span class="sub">رقم الويب: <b class="num">${esc(m.web||"—")}</b></span>${m.date?`<span class="sub">التاريخ: <b class="num">${esc(m.date)}</b></span>`:""}${m.vat!=null?`<span class="sub">الضريبة: <b class="num">${money(m.vat)}</b></span>`:""}${m.net!=null?`<span class="sub">الصافي شامل الضريبة: <b class="num">${money(m.net)}</b></span>`:""}</div>`:""}
+    <div class="row"><span class="flag ok">مطابقة ${r.matched.length}</span>${r.qtyChg.length?`<span class="flag warn">الكمية تغيّرت ${r.qtyChg.length}</span>`:""}${r.missing.length?`<span class="flag bad">ما جت ب${L} ${r.missing.length}</span>`:""}${r.extra.length?`<span class="flag info">زيادة ب${L} ${r.extra.length}</span>`:""}
+      <span class="sub">إجمالي ${L} قبل الضريبة: <b class="num">${money(r.total)}</b></span></div>
     ${r.qtyChg.length?`<b style="font-size:13px">كميات عدّلتها الوكالة</b>${li(r.qtyChg,c=>`<span class="pn">${esc(c.pn)}</span> ${c.from}→${c.to}`)}`:""}
-    ${r.missing.length?`<b style="font-size:13px">بالطلبية وما جت بالتسعيرة (تتعلّم غير متوفر)</b>${li(r.missing,c=>`<span class="pn">${esc(c.pn)}</span>`)}`:""}
-    ${r.extra.length?`<b style="font-size:13px">بالتسعيرة وما هي بالطلبية</b>${li(r.extra,c=>`<span class="pn">${esc(c.pn)}</span> × ${c.qty}`)}
+    ${r.missing.length?`<b style="font-size:13px">بالطلبية وما جت ب${L} (تتعلّم غير متوفر)</b>${li(r.missing,c=>`<span class="pn">${esc(c.pn)}</span>`)}`:""}
+    ${r.extra.length?`<b style="font-size:13px">ب${L} وما هي بالطلبية</b>${li(r.extra,c=>`<span class="pn">${esc(c.pn)}</span> × ${c.qty}`)}
       <label class="row" style="font-size:13px"><input type="checkbox" id="qAddExtra" checked> أضفها للطلبية</label>`:""}
-    <div class="row"><button class="primary" id="applyQuote">تطبيق التسعيرة وتعليم: تسعّرت</button><button class="ghost" id="dropQuote">إلغاء</button></div></div>`;
+    <div class="row"><button class="primary" id="applyQuote">${isInv?"تطبيق الفاتورة":"تطبيق التسعيرة"}${o.status==="requested"||o.status==="priced"?(isInv?" وتعليم: تأكدت":(o.status==="requested"?" وتعليم: تسعّرت":"")):""}</button><button class="ghost" id="dropQuote">إلغاء</button></div></div>`;
 }
 function matchQuote(o,list){
   const items=o.items||[]; const used=new Set(); const res={matched:[],qtyChg:[],missing:[],extra:[],total:0,map:[]};
@@ -544,7 +551,9 @@ async function saveNew(){
   const now=new Date().toISOString();
   const safe=normWeb(web).replace(/[^A-Za-z0-9_\-.~:@+]/g,"_"); const id=/^[._]*$/.test(safe)?"o"+Date.now():"w-"+safe;
   const body={web,kind:draft.kind,supplier:draft.supplier.trim(),customer:draft.customer.trim(),expected:draft.expected,note:draft.note.trim(),quotes:draft.quotes,
-    items,shipments:[],status:"requested",createdAt:now,updatedAt:now,createdBy:myId,history:[{s:"requested",at:now,by:myId,role}]};
+    ...(draft.meta&&draft.meta.kind==="invoice"?{agencyInvoice:{no:draft.meta.invoiceNo||"",date:draft.meta.date||"",parts:draft.meta.parts??null,vat:draft.meta.vat??null,net:draft.meta.net??null,file:draft.srcFile?draft.srcFile.name:"",at:now}}:{}),
+    items,shipments:[],status:draft.meta&&draft.meta.kind==="invoice"?"confirmed":"requested",createdAt:now,updatedAt:now,createdBy:myId,history:[{s:draft.meta&&draft.meta.kind==="invoice"?"confirmed":"requested",at:now,by:myId,role,...(draft.meta&&draft.meta.invoiceNo?{note:"من فاتورة الوكالة "+draft.meta.invoiceNo}:{})}]};
+  if(draft.srcFile&&!draft.quotes.some(q=>q.name===draft.srcFile.name||q.name===draft.srcFile.name.replace(/\.xlsx?$/i,".csv"))){ const up=await uploadQuote(draft.srcFile); if(up) body.quotes=[...body.quotes,up] }
   const btn=$("#saveNew"); if(btn) btn.disabled=true;
   try{ await db.collection("orders").doc(id).set(body); draft=blankDraft(); tab="orders"; filter="open"; openId=id; toast("انحفظت الطلبية "+web); render() }
   catch(e){ if(btn) btn.disabled=false; toast(e&&/permission/.test(e.code||"")?"ما عندك صلاحية إضافة":"تعذّر الحفظ: "+(e&&e.message||"")) }
@@ -565,8 +574,90 @@ async function uploadQuote(file){
 }
 
 /* ---------- import ---------- */
+/* Agency PDF reader (Petromin / CDK invoices, quotations, orders). Works with pdf.js page.getTextContent(). */
+const PDFX = (()=>{
+  const PN = /^N?[A-Z0-9]{2,6}-?[A-Z0-9]{3,8}$/;
+  const isPN = s => PN.test(s) && /\d/.test(s) && (s[0]==="N"||/[A-Z]/.test(s)) && s.replace(/-/g,"").length>=9 && !/^\d+$/.test(s);
+  const num = s => { const t=String(s).replace(/[\s,]/g,"").replace(/[A-Z]+$/i,""); return /^-?\d+(\.\d+)?$/.test(t)?Number(t):null };
+  const ar = s => s.normalize("NFKC").replace(/ی/g,"ي").replace(/ک/g,"ك").replace(/ھ/g,"ه").replace(/\s+/g," ").trim();
+  const hasAr = s => /[؀-ۿﭐ-﻿]/.test(s);
+  function below(items, re, maxDx=18){
+    const h=items.find(i=>re.test(i.s)); if(!h) return "";
+    const c=items.filter(i=>i.y<h.y-4&&i.y>h.y-26&&Math.abs(i.x-h.x)<maxDx&&!hasAr(i.s)).sort((a,b)=>b.y-a.y);
+    return c.length?c[0].s:"";
+  }
+  function rightOf(items, re){
+    const h=items.find(i=>re.test(i.s)); if(!h) return null;
+    const c=items.filter(i=>Math.abs(i.y-h.y)<4&&i.x>h.x).sort((a,b)=>b.x-a.x);
+    for(const i of c){ const n=num(i.s); if(n!=null) return n } return null;
+  }
+  async function read(pdfDoc){
+    const pages=[];
+    for(let p=1;p<=pdfDoc.numPages;p++){
+      const tc=await (await pdfDoc.getPage(p)).getTextContent();
+      pages.push(tc.items.filter(i=>i.str&&i.str.trim()).map(i=>({s:i.str.trim(),x:i.transform[4],y:i.transform[5]})));
+    }
+    return parse(pages);
+  }
+  function parse(pages){
+    const docs={}; const order=[];
+    for(const items of pages){
+      const inv = below(items,/^Invoice Number$/i) || below(items,/^Quotation (No|Number)/i) || below(items,/^Order Number$/i);
+      const wip = below(items,/^W\.?I\.?P\.? ?No/i);
+      const key = (inv||"")+"|"+(wip||"");
+      if(!docs[key]){ docs[key]={invoiceNo:inv||"",wip:wip||"",date:below(items,/^Date$/),account:below(items,/^Account No/i),
+        type:items.some(i=>/TAX Invoice|ACCOUNT INVOICE/i.test(i.s))?"invoice":(items.some(i=>/quotation/i.test(i.s))?"quote":"doc"),
+        lines:{},parts:null,vat:null,net:null}; order.push(key) }
+      const d=docs[key];
+      const vv=rightOf(items,/^V\.?A\.?T\.?$/), nv=rightOf(items,/^Net$/);
+      if(vv!=null) d.vat=vv; if(nv!=null) d.net=nv;
+      for(const a of items){
+        if(!isPN(a.s)) continue;
+        const row=items.filter(i=>Math.abs(i.y-a.y)<=5);
+        const left=row.filter(i=>i.x<a.x).sort((p,q)=>q.x-p.x);
+        const lineNo=(left.find(i=>/^\d{1,4}$/.test(i.s))||{}).s||"";
+        const nums=row.filter(i=>i.x>a.x).sort((p,q)=>p.x-q.x).map(i=>({x:i.x,n:num(i.s)})).filter(o=>o.n!=null);
+        const desc=row.filter(i=>i.x>a.x&&num(i.s)==null&&!/^(EA|S|Z|E)$/.test(i.s)&&!hasAr(i.s)).sort((p,q)=>p.x-q.x).map(i=>i.s).join(" ");
+        const arName=items.filter(i=>hasAr(i.s)&&i.y<a.y-4&&i.y>a.y-17&&i.x>a.x&&i.x<a.x+200).map(i=>ar(i.s)).join(" ");
+        if(!nums.length) continue;
+        let qty=nums[0].n, unit=null, disc=null, net=null;
+        if(nums.length>=4){ net=nums[nums.length-1].n; disc=nums[nums.length-2].n; unit=nums[1].n }
+        else if(nums.length===3){ unit=nums[1].n; net=nums[2].n }
+        else if(nums.length===2){ unit=nums[1].n }
+        if(net==null&&unit!=null) net=qty*unit;
+        const price = qty&&net!=null ? Math.round(net/qty*10000)/10000 : unit;
+        const k=lineNo||a.s+"#"+qty;
+        d.lines[k]={line:lineNo?Number(lineNo):null,pn:a.s,desc,arName,qty,list:unit,disc,net,price};
+      }
+    }
+    return order.map(k=>{const d=docs[k]; if(d.net!=null&&d.vat!=null) d.parts=Math.round((d.net-d.vat)*100)/100; d.lines=Object.values(d.lines).sort((a,b)=>(a.line??1e9)-(b.line??1e9)); return d}).filter(d=>d.lines.length);
+  }
+  return {read,parse};
+})();
+
+const webFromName=n=>{const m=String(n||"").match(/(?:aw|wip|web)[ _-]*(\d{4,6})(?!\d)/i);return m?m[1]:""};
+async function readAgency(f){ // -> {list, meta}
+  const isPdf=/\.pdf$/i.test(f.name)||f.type==="application/pdf";
+  if(isPdf){
+    if(typeof pdfjsLib==="undefined") throw new Error("قارئ PDF ما تحمّل");
+    pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const doc=await pdfjsLib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise;
+    const docs=await PDFX.read(doc); if(!docs.length) throw new Error("ما لقيت أرقام قطع في ملف PDF");
+    const d=docs[0];
+    const list=d.lines.map(l=>({pn:normPN(l.pn),name:l.arName||l.desc||"",qty:N(l.qty)||1,price:l.price,list:l.list,disc:l.disc,cust:""}));
+    return {list,meta:{kind:d.type,web:d.wip||webFromName(f.name),invoiceNo:d.type==="invoice"?d.invoiceNo:"",docNo:d.invoiceNo,date:d.date,parts:d.parts,vat:d.vat,net:d.net,more:docs.length-1}};
+  }
+  if(typeof XLSX==="undefined") throw new Error("قارئ Excel ما تحمّل");
+  const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});
+  const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""});
+  const list=parseRows(rows); if(!list.length) throw new Error("ما لقيت أرقام قطع في الملف");
+  const flat=rows.slice(0,15).map(r=>(r||[]).join(" ")).join(" ");
+  const inv=(flat.match(/invoice\s*(?:no|number|#)?\s*[:.]?\s*(\d{6,})/i)||[])[1]||"";
+  const wip=(flat.match(/w\.?i\.?p\.?\s*(?:no)?\.?\s*[:.]?\s*(\d{4,6})/i)||[])[1]||webFromName(f.name);
+  return {list,meta:{kind:(inv||list.hasNet)?"invoice":"quote",web:wip,invoiceNo:inv,docNo:inv,title:list.title}};
+}
 function parseRows(rows){
-  let start=0, col={pn:0,name:-1,qty:-1,price:-1,cust:-1};
+  let start=0, col={pn:0,name:-1,qty:-1,price:-1,cust:-1,net:-1,disc:-1};
   const hi=rows.findIndex((r,i)=>i<10&&(r||[]).some(c=>/رقم القطعة|^الرقم$|^رقم$|part|الكمية|^qty|^qyt/i.test(String(c||"").trim())));
   if(hi>=0){
     const h=rows[hi].map(c=>String(c||"").trim()); const find=re=>h.findIndex(c=>re.test(c));
@@ -574,14 +665,17 @@ function parseRows(rows){
     const pn=find(/رقم القطعة|^الرقم$|^رقم$|^parts?\b|part ?#|part ?no|item ?no|رقم الصنف/i); if(pn>=0) col.pn=pn;
     col.name=find(/الاسم|اسم|name|desc|الوصف/i);
     col.qty=find(/الكمية المطلوبة|الكمية المقترحة|^الكمية$|^الكميه$|^كمية$|^qty|^qyt|quantity/i); if(col.qty<0) col.qty=find(/كمي/i);
-    col.price=find(/u\/?\s*price|unit ?price|^price|سعر/i); col.cust=find(/عميل|customer/i);
+    col.price=find(/u\/?\s*price|unit ?price|^price|سعر الوحدة|^سعر/i); col.cust=find(/عميل|customer/i);
+    col.net=find(/net ?total|^net$|الصافي|السعر الإجمالي/i); col.disc=find(/^disc|خصم/i);
+    if(col.name>=0&&/description of goods/i.test(h[col.name])===false&&/^(customer|عميل)/i.test(h[col.name])) col.name=-1;
   }
   const out=[];
   for(const r of rows.slice(start)){
     const cells=(r||[]).map(c=>c==null?"":String(c).trim()); if(!cells.length) continue;
     const pn=normPN(cells[col.pn]); if(!pn||!/[0-9]/.test(pn)) continue;
     let qty,name="",price=null,cust="";
-    if(hi>=0){ qty=Number(cells[col.qty]); name=col.name>=0?cells[col.name]:""; price=col.price>=0&&cells[col.price]!==""?Math.round(Number(String(cells[col.price]).replace(/,/g,""))*10000)/10000:null; cust=col.cust>=0?cells[col.cust]:"" }
+    if(hi>=0){ qty=Number(cells[col.qty]); name=col.name>=0?cells[col.name]:""; price=col.price>=0&&cells[col.price]!==""?Math.round(Number(String(cells[col.price]).replace(/,/g,""))*10000)/10000:null; cust=col.cust>=0?cells[col.cust]:"";
+      const nt=col.net>=0?Number(String(cells[col.net]).replace(/[,\sA-Z]/gi,"")):NaN; if(isFinite(nt)&&nt>0&&qty>0){ price=Math.round(nt/qty*10000)/10000; out.hasNet=true } }
     else { const rest=cells.slice(1).filter(c=>c!==""); const nums=rest.filter(c=>!isNaN(Number(c))); name=rest.filter(c=>isNaN(Number(c))).join(" "); qty=Number(nums[0]); price=nums[1]!=null?Number(nums[1]):null }
     out.push({pn,name,qty:isFinite(qty)&&qty>0?qty:1,price:isFinite(price)?price:null,cust});
   }
@@ -592,21 +686,15 @@ function mergeDraft(list){
   let added=0; for(const it of list){ const ex=draft.items.find(i=>keyPN(i.pn)===keyPN(it.pn)); if(ex){ex.qty=N(ex.qty)+it.qty} else {draft.items.push(it);added++} }
   toast(`أُضيف ${added} صنف${list.length-added?` ودُمج ${list.length-added} مكرر`:""}`); render();
 }
-function readRows(f,cb){
-  if(typeof XLSX==="undefined"){toast("قارئ Excel ما تحمّل");return}
-  const fr=new FileReader(); fr.onload=()=>{ try{ const wb=XLSX.read(fr.result,{type:"array"});
-    const list=parseRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""}));
-    if(!list.length){toast("ما لقيت أرقام قطع في الملف");return} cb(list) }catch(e){toast("تعذّر قراءة الملف")} };
-  fr.readAsArrayBuffer(f);
+async function readRows(f,cb){
+  try{ const r=await readAgency(f); cb(r.list,r.meta) }catch(e){ toast(e&&e.message||"تعذّر قراءة الملف") }
 }
-function readFile(f){
-  if(typeof XLSX==="undefined"){toast("قارئ Excel ما تحمّل — الصق البيانات بدلاً من ذلك");return}
-  const fr=new FileReader(); fr.onload=()=>{ try{ const wb=XLSX.read(fr.result,{type:"array"});
-    const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""});
-    const list=parseRows(rows); if(!list.length){toast("ما لقيت أرقام قطع في الملف");return}
-    if(!draft.note) draft.note=list.title||f.name.replace(/\.[^.]+$/,"").replace(/_/g," ");
-    mergeDraft(list) }catch(e){toast("تعذّر قراءة الملف")} };
-  fr.readAsArrayBuffer(f);
+async function readFile(f){
+  try{ const {list,meta}=await readAgency(f);
+    if(meta.web&&!draft.web) draft.web=meta.web;
+    if(!draft.note) draft.note=meta.invoiceNo?`فاتورة الوكالة ${meta.invoiceNo}${meta.date?" · "+meta.date:""}`:(meta.title||f.name.replace(/\.[^.]+$/,"").replace(/_/g," "));
+    draft.meta=meta; draft.srcFile=f;
+    mergeDraft(list) }catch(e){ toast(e&&e.message||"تعذّر قراءة الملف") }
 }
 
 /* ---------- export ---------- */
@@ -614,8 +702,8 @@ async function exportXlsx(kind){
   if(typeof XLSX==="undefined"){toast("مكتبة Excel غير محمّلة");return}
   let rows;
   if(kind==="queue") rows=[["رقم القطعة","الاسم","باقي ما وصل","واصل بانتظار الإدخال","رقم الويب","العميل","الحالة","تاريخ الطلب"],...queueRows().map(r=>[r.it.pn,r.it.name||"",r.out,r.pend,r.o.web,r.it.cust||r.o.customer||"",ST[r.o.status].t,fmtDay(r.o.createdAt)])];
-  else { rows=[["رقم الويب","النوع","العميل","تاريخ الطلب","الوصول المتوقع","حالة الطلبية","رقم القطعة","الاسم","حالة القطعة","الكمية","السعر","الإجمالي","الواصل"]];
-    orders.forEach(o=>(o.items||[]).forEach((i,x)=>rows.push([o.web,KIND_T[o.kind||"local"],i.cust||o.customer||"",fmtDay(o.createdAt),o.expected?fmtDay(o.expected):"",ST[o.status].t,i.pn,i.name||"",i.st==="na"?"غير متوفر":i.st==="removed"?"محذوفة":"",i.qty,i.price??"",i.price&&active(i)?i.qty*i.price:"",recvOf(o,x)]))) }
+  else { rows=[["رقم الويب","فاتورة الوكالة","النوع","العميل","تاريخ الطلب","الوصول المتوقع","حالة الطلبية","رقم القطعة","الاسم","حالة القطعة","الكمية","السعر","الإجمالي","الواصل"]];
+    orders.forEach(o=>(o.items||[]).forEach((i,x)=>rows.push([o.web,(o.agencyInvoice||{}).no||"",KIND_T[o.kind||"local"],i.cust||o.customer||"",fmtDay(o.createdAt),o.expected?fmtDay(o.expected):"",ST[o.status].t,i.pn,i.name||"",i.st==="na"?"غير متوفر":i.st==="removed"?"محذوفة":"",i.qty,i.price??"",i.price&&active(i)?i.qty*i.price:"",recvOf(o,x)]))) }
   const wb=XLSX.utils.book_new(); const ws=XLSX.utils.aoa_to_sheet(rows); ws["!cols"]=rows[0].map(()=>({wch:16})); wb.Workbook={Views:[{RTL:true}]};
   XLSX.utils.book_append_sheet(wb,ws,kind==="queue"?"الانتظار":"الطلبيات");
   const buf=XLSX.write(wb,{type:"array",bookType:"xlsx"});
@@ -657,16 +745,21 @@ document.addEventListener("click",async ev=>{
     case "resetDraft": draft=blankDraft(); return render();
     case "saveNew": return saveNew();
     case "dropQuote": pendingQuote=null; return renderDrawer();
+    case "applyToExisting": { const ex=orders.find(x=>normWeb(x.web)===normWeb(draft.web)); if(!ex) return;
+      const list=draft.items.map(i=>({...i,pn:normPN(i.pn)})); pendingQuote={oid:ex.id,name:draft.srcFile?draft.srcFile.name:"ملف",file:draft.srcFile||new Blob([""]),list,meta:draft.meta||{kind:"quote"},res:matchQuote(ex,list)};
+      draft=blankDraft(); tab="orders"; openId=ex.id; render(); return }
     case "applyQuote": { if(!o||!pendingQuote) return; const pq=pendingQuote, r=matchQuote(o,pq.list);
       const items=o.items.map(i=>({...i}));
-      r.map.forEach(({i,q})=>{ items[i].price=q.price; items[i].qty=q.qty });
+      const m=pq.meta||{}, isInv=m.kind==="invoice";
+      r.map.forEach(({i,q})=>{ items[i].price=q.price; items[i].qty=q.qty; if(!items[i].name&&q.name) items[i].name=q.name; if(q.list!=null) items[i].list=q.list; if(q.disc!=null) items[i].disc=q.disc });
       r.missing.forEach(m=>{ items[m.i].st="na" });
       const addX=$("#qAddExtra")?$("#qAddExtra").checked:false;
       if(addX) r.extra.forEach(q=>items.push({pn:q.pn,name:q.name||"",qty:q.qty,price:q.price,cust:"",st:"active",fromQuote:true}));
-      t.disabled=true; const up=await uploadQuote(pq.file);
-      const st=o.status==="requested"?"priced":o.status;
-      const note=`تسعيرة ${pq.name}: ${r.matched.length} تسعّرت${r.qtyChg.length?` · ${r.qtyChg.length} كمية تغيّرت`:""}${r.missing.length?` · ${r.missing.length} غير متوفر`:""}${addX&&r.extra.length?` · ${r.extra.length} أضيفت`:""}`;
-      if(await writeOrder(o,{items,status:st,...(up?{quotes:[...(o.quotes||[]),up]}:{})},{s:st,note})){ pendingQuote=null; toast("تطبّقت التسعيرة") } else t.disabled=false;
+      t.disabled=true; const up=isOwner?await uploadQuote(pq.file):null;
+      const st=isInv?(["requested","priced"].includes(o.status)?"confirmed":o.status):(o.status==="requested"?"priced":o.status);
+      const invPatch=isInv?{agencyInvoice:{no:m.invoiceNo||"",date:m.date||"",parts:m.parts??Math.round(r.total*100)/100,vat:m.vat??null,net:m.net??null,file:pq.name,at:new Date().toISOString()}}:{};
+      const note=`${isInv?"فاتورة "+(m.invoiceNo||pq.name):"تسعيرة "+pq.name}: ${r.matched.length} تسعّرت${r.qtyChg.length?` · ${r.qtyChg.length} كمية تغيّرت`:""}${r.missing.length?` · ${r.missing.length} غير متوفر`:""}${addX&&r.extra.length?` · ${r.extra.length} أضيفت`:""}`;
+      if(await writeOrder(o,{items,status:st,...invPatch,...(up?{quotes:[...(o.quotes||[]),up]}:{})},{s:st,note})){ pendingQuote=null; toast(isInv?"تطبّقت الفاتورة":"تطبّقت التسعيرة") } else t.disabled=false;
       return }
     case "saveItems": if(o&&await writeOrder(o,{items:readEdits(o),...readMeta()},{note:"تعديل بيانات الطلبية"})) toast("انحفظت التعديلات"); return;
     case "fillAll": document.querySelectorAll("[data-b]").forEach(inp=>inp.value=inp.max); return;
@@ -694,7 +787,7 @@ document.addEventListener("change",async ev=>{
   if(t.id==="nKind"){draft.kind=t.value; if(t.value==="external"&&/بن ضباب/.test(draft.supplier)) {draft.supplier="";render()} return}
   if(t.id==="file"&&t.files[0]){readFile(t.files[0]);t.value="";return}
   if(t.id==="quoteXls"&&t.files[0]){ const f=t.files[0]; t.value=""; const o=orders.find(x=>x.id===openId); if(!o) return;
-    readRows(f,list=>{ pendingQuote={oid:o.id,name:f.name,file:f,list,res:matchQuote(o,list)}; renderDrawer() }); return }
+    readRows(f,(list,meta)=>{ pendingQuote={oid:o.id,name:f.name,file:f,list,meta,res:matchQuote(o,list)}; renderDrawer() }); return }
   if(t.id==="nWeb"){render();return}
   if(t.id==="qFileNew"&&t.files[0]){const file=t.files[0]; t.value=""; if(/\.(xlsx?|csv)$/i.test(file.name)&&!draft.items.length) readFile(file); const f=await uploadQuote(file); if(f){draft.quotes.push(f);render();toast("انرفق الملف")} return}
   if(t.id==="qFile"&&t.files[0]){const o=orders.find(x=>x.id===openId); const f=await uploadQuote(t.files[0]); t.value=""; if(o&&f&&await writeOrder(o,{quotes:[...(o.quotes||[]),f]},{note:"إرفاق "+f.name})) toast("انرفق الملف"); return}
