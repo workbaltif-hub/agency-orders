@@ -234,7 +234,11 @@ const pill=k=>{const s=ST[k]||ST.requested;return `<span class="pill" style="bac
 const active=it=>!it.st||it.st==="active";
 const recvOf=(o,i)=>(o.shipments||[]).reduce((a,s)=>a+(s.lines||[]).filter(l=>l.i===i).reduce((b,l)=>b+N(l.qty),0),0);
 const entOf=(o,i)=>(o.shipments||[]).filter(s=>s.enteredAt).reduce((a,s)=>a+(s.lines||[]).filter(l=>l.i===i).reduce((b,l)=>b+N(l.qty),0),0);
-const total=o=>(o.items||[]).reduce((a,it)=>a+(active(it)?N(it.qty)*N(it.price):0),0);
+const eff=it=>Math.max(N(it.qty)-N(it.cut),0); // expected qty after "not sent" cuts
+const invList=o=>o.invoices||(o.agencyInvoice?[{...o.agencyInvoice,lines:o.agencyInvoice.lines||(o.items||[]).map((it,i)=>active(it)?{i,qty:it.qty,price:it.price}:null).filter(Boolean)}]:[]);
+const invOf=(o,i)=>invList(o).reduce((a,v)=>a+(v.lines||[]).filter(l=>l.i===i).reduce((b,l)=>b+N(l.qty),0),0);
+const invNos=o=>invList(o).map(v=>v.no).filter(Boolean);
+const total=o=>(o.items||[]).reduce((a,it)=>a+(active(it)?eff(it)*N(it.price):0),0);
 const overdue=o=>o.expected&&["requested","priced","confirmed","partial"].includes(o.status)&&o.expected<today();
 const pendingBatches=o=>(o.shipments||[]).filter(s=>!s.enteredAt);
 function toast(m){const r=$("#toastRoot");r.innerHTML=`<div class="toast" role="status">${esc(m)}</div>`;clearTimeout(toast.t);toast.t=setTimeout(()=>r.innerHTML="",2800)}
@@ -244,7 +248,7 @@ function queueRows(){
   const rows=[];
   for(const o of orders){ if(!OPEN.has(o.status)) continue;
     (o.items||[]).forEach((it,i)=>{ if(!active(it)) return;
-      const rc=recvOf(o,i), out=Math.max(N(it.qty)-rc,0), pend=rc-entOf(o,i);
+      const rc=recvOf(o,i), out=Math.max(eff(it)-rc,0), pend=rc-entOf(o,i);
       if(out>0||pend>0) rows.push({o,it,i,out,pend});
     });}
   return rows;
@@ -279,15 +283,15 @@ function renderStages(){
     <span>${c.c?`<i class="dot" style="background:var(--s-${c.c})"></i>`:""}${c.t}</span><b>${c.n}</b></button>`).join("");
 }
 function orderRow(o){
-  const its=(o.items||[]).filter(active); const qty=its.reduce((a,i)=>a+N(i.qty),0);
-  const rc=(o.items||[]).reduce((a,it,i)=>a+(active(it)?Math.min(recvOf(o,i),N(it.qty)):0),0);
+  const its=(o.items||[]).filter(active); const qty=its.reduce((a,i)=>a+eff(i),0);
+  const rc=(o.items||[]).reduce((a,it,i)=>a+(active(it)?Math.min(recvOf(o,i),eff(it)):0),0);
   const nx=nextAction(o); const pb=pendingBatches(o).length;
   return `<tr class="click" data-open="${esc(o.id)}"><td class="pn">${esc(o.web)}</td>
     <td><span class="kind">${KIND_T[o.kind||"local"]}</span></td><td class="wrapcell">${esc(o.customer||"")}</td>
     <td class="num">${fmtDay(o.createdAt)}</td><td class="num">${its.length}</td>
     <td class="num">${["partial","arrived","entered"].includes(o.status)?`${rc}/${qty}`:qty}</td>
     <td class="num">${total(o)?money(total(o)):"—"}</td>
-    <td>${pill(o.status)}${overdue(o)?` <span class="flag bad">متأخرة</span>`:""}${pb&&o.status!=="entered"?` <span class="flag warn">${pb} دفعة بانتظار الإدخال</span>`:""}</td>
+    <td>${pill(o.status)}${invList(o).length>1?` <span class="flag info">${invList(o).length} فواتير</span>`:""}${overdue(o)?` <span class="flag bad">متأخرة</span>`:""}${pb&&o.status!=="entered"?` <span class="flag warn">${pb} دفعة بانتظار الإدخال</span>`:""}</td>
     <td class="num ${overdue(o)?"":"sub"}">${o.expected?fmtDay(o.expected):"—"}</td>
     <td class="sub">${nx?esc(nx.who+": "+nx.label):"—"}</td></tr>`;
 }
@@ -349,7 +353,7 @@ function runCheck(){
 }
 function renderSearch(m){
   const t=keyPN(q), tl=q.trim(), tw=normWeb(q);
-  const ol=orders.filter(o=>normWeb(o.web).includes(tw)||(tl.length>=5&&((o.agencyInvoice||{}).no||"").includes(tl))||(tl&&(o.customer||"").includes(tl)));
+  const ol=orders.filter(o=>normWeb(o.web).includes(tw)||(tl.length>=5&&invNos(o).some(n=>n.includes(tl)))||(tl&&(o.customer||"").includes(tl)));
   const hits=[]; orders.forEach(o=>(o.items||[]).forEach((it,i)=>{const p=keyPN(it.pn); if((t&&p.includes(t))||baseA(p)===baseA(t)||(tl&&(it.cust||"").includes(tl))) hits.push({o,it,i})}));
   m.innerHTML=`<div class="panel"><div class="toolbar"><b>نتائج البحث عن <span class="pn">${esc(q)}</span></b><span class="spacer"></span><button class="ghost" id="clrQ">مسح البحث</button></div>
    ${ol.length?`<div class="tbl-wrap"><table><thead><tr><th>رقم الويب</th><th>النوع</th><th>العميل</th><th>التاريخ</th><th>القطع</th><th>الكمية</th><th>الإجمالي</th><th>الحالة</th><th>الوصول المتوقع</th><th>الخطوة التالية</th></tr></thead><tbody>${ol.map(orderRow).join("")}</tbody></table></div>`:""}
@@ -358,11 +362,10 @@ function renderSearch(m){
    </tbody></table></div>`:""}
    ${!ol.length&&!hits.length?`<div class="empty"><h3>ما فيه أي طلبية لهذا البحث</h3><p class="hint">الرقم غير موجود بأي طلبية، مفتوحة أو مغلقة.</p></div>`:""}</div>`;
 }
-const itemFlag=it=>it.st==="na"?` <span class="flag info">غير متوفر بالوكالة</span>`:it.st==="removed"?` <span class="flag bad">محذوفة من الطلبية</span>`:"";
+const itemFlag=it=>it.st==="na"?` <span class="flag info">غير متوفر بالوكالة</span>`:it.st==="removed"?` <span class="flag bad">محذوفة من الطلبية</span>`:N(it.cut)>0?` <span class="flag bad">ما انرسل ${N(it.cut)>=N(it.qty)?"":N(it.cut)+" "}(تالف/ما حصلوه)</span>`:"";
 
 function renderNew(m){
   if(role!=="owner"){m.innerHTML=`<div class="panel empty"><h3>إضافة الطلبيات من المدير فقط</h3></div>`;return}
-  const dupWeb = draft.web && orders.some(o=>normWeb(o.web)===normWeb(draft.web));
   m.innerHTML=`<div class="panel sec"><h2>طلبية جديدة</h2>
    <div class="grid2">
      <label class="f" for="nWeb">رقم الويب *<input id="nWeb" type="text" value="${esc(draft.web)}" class="num" placeholder="مثال: 4501234"></label>
@@ -372,11 +375,11 @@ function renderNew(m){
      <label class="f" for="nExp">تاريخ الوصول المتوقع<input id="nExp" type="date" value="${esc(draft.expected)}"></label>
      <label class="f" for="nNote">ملاحظة<input id="nNote" type="text" value="${esc(draft.note)}" placeholder="اختياري"></label>
    </div>
-   ${dupWeb?`<div class="banner row">رقم الويب هذا موجود بطلبية ثانية.${draft.items.length?` <button class="mini" id="applyToExisting">طبّق الملف على الطلبية الموجودة</button>`:""}</div>`:""}
+   <div id="webBanner">${webBannerHtml()}</div>
    <div class="dropzone" id="dz">اسحب ملف الطلبية أو الفاتورة هنا (PDF أو Excel) أو <label style="color:var(--accent);cursor:pointer;text-decoration:underline">اختر ملف<input id="file" type="file" accept=".pdf,.xlsx,.xls,.csv" hidden></label>
      <div class="hint" style="margin-top:4px">يطلّع رقم الويب ورقم الفاتورة والقطع بأسمائها وكمياتها وأسعارها بعد الخصم</div></div>
    <label class="f" for="paste">أو الصق من Excel: رقم القطعة ⇥ الاسم ⇥ الكمية ⇥ السعر
-     <textarea id="paste" placeholder="15208-65F0E&#9;فلتر زيت&#9;20&#10;27277-4M400A&#9;فلتر مكيف&#9;10"></textarea></label>
+     <textarea id="paste" placeholder="15208-65F0E&#9;فلتر زيت&#9;20&#10;27277-4M400A&#9;فلتر مكيف&#9;10">${esc(draft.paste||"")}</textarea></label>
    <div class="row"><button id="addPaste">أضف الملصوق</button><button class="ghost" id="addRow">+ سطر يدوي</button></div>
    <div id="draftTbl"></div>
    <div class="row"><span class="sub">ملفات الوكالة:</span>${draft.quotes.map(f=>`${fileLink(f)}`).join(" · ")||`<span class="sub">ما فيه مرفق</span>`}
@@ -384,13 +387,19 @@ function renderNew(m){
    <div class="row"><span class="spacer"></span><button class="ghost" id="resetDraft">تفريغ</button><button class="primary" id="saveNew">حفظ الطلبية (طلب تسعير)</button></div></div>`;
   $("#nKind").value=draft.kind; renderDraftTbl(); syncSave();
 }
-function syncSave(){const b=$("#saveNew");if(b)b.disabled=!draft.web.trim()||!draft.items.length||orders.some(o=>normWeb(o.web)===normWeb(draft.web))||!canWrite}
+function webBannerHtml(){
+  const exWeb = draft.web && orders.find(o=>normWeb(o.web)===normWeb(draft.web)), dupWeb=!!exWeb;
+  return dupWeb?`<div class="banner" style="display:flex;flex-direction:column;gap:8px"><div>رقم الويب <b class="num">${esc(exWeb.web)}</b> موجود بطلبية (${ST[exWeb.status].t}${invNos(exWeb).length?` · فواتير: <span class="num">${esc(invNos(exWeb).join("، "))}</span>`:""}). ${draft.meta&&draft.meta.kind==="invoice"?"لو هذي فاتورة ثانية لنفس الويب أضفها على الطلبية الموجودة.":"تقدر تضيف الملف عليها، أو تحفظها طلبية منفصلة."}</div>
+     ${draft.items.length?`<div class="row"><button class="primary mini" id="applyToExisting">أضف الملف على الطلبية الموجودة</button><span class="sub">أو احفظ تحت كطلبية منفصلة</span></div>`:""}</div>`:"";
+}
+function syncSave(){const b=$("#saveNew");if(b)b.disabled=!draft.web.trim()||!draft.items.length||!canWrite}
 function renderDraftTbl(){
   const el=$("#draftTbl"); if(!el) return;
   if(!draft.items.length){el.innerHTML=`<p class="hint">ما أضفت قطع بعد.</p>`;return}
   const dups=draft.items.filter(i=>lookup(i.pn).exact.length).length;
+  const cnt={}; draft.items.forEach(i=>{const k=keyPN(i.pn); if(k) cnt[k]=(cnt[k]||0)+1}); const rep=Object.values(cnt).filter(n=>n>1).length;
   const qty=draft.items.reduce((a,i)=>a+N(i.qty),0), tot=draft.items.reduce((a,i)=>a+N(i.qty)*N(i.price),0);
-  el.innerHTML=`${dups?`<div class="banner" style="margin-bottom:8px">${dups} قطعة موجودة أصلاً في قائمة الانتظار — راجعها قبل الحفظ.</div>`:""}
+  el.innerHTML=`${dups?`<div class="banner" style="margin-bottom:8px">${dups} قطعة موجودة أصلاً في قائمة الانتظار — راجعها قبل الحفظ.</div>`:""}${rep?`<div class="banner" style="margin-bottom:8px">${rep} رقم مكرر بالملف — انحفظ كل سطر لحاله. احذف المكرر لو ما تحتاجه.</div>`:""}
   <div class="tbl-wrap panel"><table><thead><tr><th>#</th><th>رقم القطعة</th><th>الاسم</th><th>الكمية</th><th>السعر</th><th>للعميل</th><th>بالانتظار؟</th><th></th></tr></thead><tbody>
   ${draft.items.map((i,x)=>{const L=lookup(i.pn);return `<tr><td class="num">${x+1}</td>
     <td><input type="text" class="pn wide" id="d-pn-${x}" data-d="${x}" data-f="pn" value="${esc(i.pn)}"></td>
@@ -398,7 +407,7 @@ function renderDraftTbl(){
     <td><input type="number" min="0" id="d-q-${x}" data-d="${x}" data-f="qty" value="${i.qty}"></td>
     <td><input type="number" min="0" step="0.01" id="d-p-${x}" data-d="${x}" data-f="price" value="${i.price??""}"></td>
     <td><input type="text" id="d-c-${x}" data-d="${x}" data-f="cust" value="${esc(i.cust||"")}"></td>
-    <td>${L.exact.length?`<span class="flag bad">نعم · ويب ${esc(L.exact[0].o.web)}</span>`:L.near.length?`<span class="flag warn">محتمل · ${esc(L.near[0].it.pn)}</span>`:`<span class="flag ok">لا</span>`}${L.na.length?` <span class="flag info">سبق غير متوفر</span>`:""}</td>
+    <td>${cnt[keyPN(i.pn)]>1?`<span class="flag warn">مكرر ×${cnt[keyPN(i.pn)]}</span> `:""}${L.exact.length?`<span class="flag bad">نعم · ويب ${esc(L.exact[0].o.web)}</span>`:L.near.length?`<span class="flag warn">محتمل · ${esc(L.near[0].it.pn)}</span>`:`<span class="flag ok">لا</span>`}${L.na.length?` <span class="flag info">سبق غير متوفر</span>`:""}</td>
     <td><button class="ghost mini" data-del="${x}" aria-label="حذف السطر">حذف</button></td></tr>`}).join("")}
   <tr><td colspan="3" class="total">${draft.items.length} صنف</td><td class="num total">${qty}</td><td class="num total">${tot?money(tot):""}</td><td colspan="3"></td></tr>
   </tbody></table></div>`;
@@ -433,7 +442,8 @@ async function renderDrawer(){
   const editMain = owner && ["requested","priced","confirmed"].includes(o.status);
   const canBatch = (role==="store"||owner) && ["confirmed","partial"].includes(o.status);
   const canRemove = !owner && ["confirmed","partial","arrived"].includes(o.status);
-  const its=o.items||[];
+  const canCut = canWrite && (owner||role==="entry") && ["confirmed","partial","arrived"].includes(o.status);
+  const its=o.items||[], invs=invList(o), hasInv=invs.length>0;
   root.innerHTML=`<div class="scrim" data-close></div><aside class="drawer" role="dialog" aria-label="تفاصيل الطلبية">
    <div class="dh"><button class="ghost" data-close aria-label="إغلاق">✕</button><div><div class="sub">رقم الويب</div><b class="pn" style="font-size:18px">${esc(o.web)}</b></div>${pill(o.status)}<span class="kind">${KIND_T[o.kind||"local"]}</span>${overdue(o)?`<span class="flag bad">متأخرة</span>`:""}<span class="spacer"></span>
      <span class="sub">${esc(o.supplier||"")}</span></div>
@@ -448,36 +458,41 @@ async function renderDrawer(){
       <div class="row"><span class="sub">ملفات الوكالة:</span>${(o.quotes||[]).map(f=>`${fileLink(f)}`).join(" · ")||`<span class="sub">ما فيه مرفق</span>`}
         ${owner&&assets&&canWrite?`<label class="mini" style="color:var(--accent);cursor:pointer;text-decoration:underline">إرفاق ملف<input id="qFile" type="file" accept=".pdf,image/*,.xlsx,.xls,.csv" hidden></label>`:""}</div>
     </div>
-    <div class="tbl-wrap panel"><table><thead><tr><th>رقم القطعة</th><th>الاسم</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th><th>الواصل</th>${canBatch?`<th>هذي الدفعة</th>`:""}<th></th></tr></thead><tbody>
-    ${its.map((i,x)=>{const rc=recvOf(o,x), act=active(i), rem=Math.max(N(i.qty)-rc,0);
+    <div class="tbl-wrap panel"><table><thead><tr><th>رقم القطعة</th><th>الاسم</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th>${hasInv?"<th>مفوتر</th>":""}<th>الواصل</th>${canBatch?`<th>هذي الدفعة</th>`:""}<th></th></tr></thead><tbody>
+    ${its.map((i,x)=>{const rc=recvOf(o,x), act=active(i), rem=Math.max(eff(i)-rc,0), iv=hasInv?invOf(o,x):0, left=eff(i)-Math.max(iv,rc);
       return `<tr class="${act?"":"off"}"><td class="pn">${esc(i.pn)}</td>
       <td class="wrapcell">${esc(i.name||"")}${i.cust?`<div class="sub">للعميل: ${esc(i.cust)}</div>`:""}${itemFlag(i)}</td>
       <td>${editMain&&act?`<input type="number" min="0" id="e-q-${x}" data-e="${x}" data-f="qty" value="${i.qty}">`:`<span class="num">${i.qty}</span>`}</td>
       <td>${editMain&&act?`<input type="number" min="0" step="0.01" id="e-p-${x}" data-e="${x}" data-f="price" value="${i.price??""}">`:`<span class="num">${i.price?money(i.price):"—"}</span>`}</td>
-      <td class="num">${act&&i.price?money(N(i.qty)*N(i.price)):"—"}</td>
+      <td class="num">${act&&i.price?money(eff(i)*N(i.price)):"—"}</td>
+      ${hasInv?`<td><span class="num">${iv}</span>${act&&iv<eff(i)&&iv>0?` <span class="flag warn">باقي ${eff(i)-iv}</span>`:""}</td>`:""}
       <td><span class="num">${rc}</span>${act&&rc>0&&rem>0?` <span class="flag warn">باقي ${rem}</span>`:""}</td>
       ${canBatch?`<td>${act&&rem>0?`<input type="number" min="0" max="${rem}" id="b-${x}" data-b="${x}" placeholder="0">`:""}</td>`:""}
       <td>${owner&&open&&i.st!=="removed"?`<button class="ghost mini" data-na="${x}">${i.st==="na"?"متوفر":"غير متوفر"}</button>`:""}
           ${(canRemove||owner&&open)&&act&&rc===0?`<button class="ghost mini" data-rm="${x}" style="color:var(--bad)">حذف</button>`:""}
-          ${owner&&i.st==="removed"&&open?`<button class="ghost mini" data-restore="${x}">إرجاع</button>`:""}</td></tr>`}).join("")}
-    <tr><td colspan="4" class="total">إجمالي الطلبية</td><td class="num total">${total(o)?money(total(o)):"—"}</td><td colspan="${canBatch?3:2}"></td></tr>
+          ${owner&&i.st==="removed"&&open?`<button class="ghost mini" data-restore="${x}">إرجاع</button>`:""}
+          ${canCut&&act&&left>0?`<button class="ghost mini" data-cut="${x}" title="تالفة أو ما حصلوها بالتحضير">ما انرسلت${left<eff(i)?" ("+left+")":""}</button>`:""}
+          ${canCut&&N(i.cut)>0?`<button class="ghost mini" data-uncut="${x}">رجّعها</button>`:""}</td></tr>`}).join("")}
+    <tr><td colspan="4" class="total">إجمالي الطلبية</td><td class="num total">${total(o)?money(total(o)):"—"}</td><td colspan="${(canBatch?3:2)+(hasInv?1:0)}"></td></tr>
     </tbody></table></div>
     ${(o.shipments||[]).length?`<div class="panel sec"><h2>الدفعات الواصلة</h2>${o.shipments.map((s,si)=>`<div class="batch">
        <div class="row"><b>دفعة ${si+1}</b><span class="num sub">${fmtD(s.at)}</span>${who(s.by)}<span class="spacer"></span>
          ${s.enteredAt?`<span class="flag ok">دخلت النظام</span>${s.invoice?`<span class="sub">فاتورة <span class="num">${esc(s.invoice)}</span></span>`:""}`:`<span class="flag warn">بانتظار الإدخال</span>`}</div>
        <div class="sub">${(s.lines||[]).map(l=>`<span class="pn">${esc((its[l.i]||{}).pn)}</span> × ${l.qty}`).join(" · ")}</div>
-       ${!s.enteredAt&&(role==="entry"||owner)&&canWrite?`<div class="row"><input type="text" id="inv-${si}" placeholder="رقم فاتورة الشراء بالنظام" style="max-width:240px"><button class="primary mini" data-enter="${si}">دخلت النظام</button></div>`:""}
+       ${!s.enteredAt&&(role==="entry"||owner)&&canWrite?`<div class="row"><input type="text" id="inv-${si}" list="invnos" placeholder="رقم الفاتورة" style="max-width:240px"><button class="primary mini" data-enter="${si}">دخلت النظام</button></div>`:""}
        ${s.enteredAt?`<div class="sub">أدخلها ${who(s.enteredBy)} <span class="num">${fmtD(s.enteredAt)}</span></div>`:""}</div>`).join("")}</div>`:""}
-    ${o.agencyInvoice?`<div class="panel sec" style="gap:6px"><h2>فاتورة الوكالة</h2><div class="row" style="gap:6px 18px">
-      <span class="sub">رقم الفاتورة: <b class="num">${esc(o.agencyInvoice.no)}</b></span>${o.agencyInvoice.date?`<span class="sub">التاريخ: <b class="num">${esc(o.agencyInvoice.date)}</b></span>`:""}
-      ${o.agencyInvoice.parts!=null?`<span class="sub">قبل الضريبة: <b class="num">${money(o.agencyInvoice.parts)}</b></span>`:""}${o.agencyInvoice.vat!=null?`<span class="sub">الضريبة: <b class="num">${money(o.agencyInvoice.vat)}</b></span>`:""}
-      ${o.agencyInvoice.net!=null?`<span class="sub">الصافي: <b class="num">${money(o.agencyInvoice.net)}</b></span>`:""}</div></div>`:""}
-    ${canWrite&&((owner&&OPEN.has(o.status))||(role==="entry"&&["confirmed","partial","arrived"].includes(o.status)))?quoteBox(o):""}
+    <datalist id="invnos">${invNos(o).map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
+    ${hasInv?`<div class="panel sec" style="gap:8px"><h2>فواتير الوكالة لهذا الويب (${invs.length})</h2>${invs.map((v,k)=>`<div class="batch"><div class="row" style="gap:6px 16px">
+      <b>فاتورة <span class="num">${esc(v.no||"بدون رقم")}</span></b>${v.date?`<span class="sub num">${esc(v.date)}</span>`:""}<span class="sub">${(v.lines||[]).length} صنف · ${(v.lines||[]).reduce((a,l)=>a+N(l.qty),0)} حبة</span>
+      <span class="sub">قبل الضريبة: <b class="num">${money(v.parts??(v.lines||[]).reduce((a,l)=>a+N(l.qty)*N(l.price),0))}</b></span>${v.net!=null?`<span class="sub">الصافي: <b class="num">${money(v.net)}</b></span>`:""}
+      ${v.partial?`<span class="flag warn">أُضيفت جزئياً</span>`:""}<span class="spacer"></span>${owner&&canWrite&&o.invoices?`<button class="ghost mini" data-delinv="${k}" style="color:var(--bad)">حذف الفاتورة</button>`:""}</div></div>`).join("")}</div>`:""}
+    ${canWrite&&((owner&&OPEN.has(o.status))||(role==="entry"&&["confirmed","partial","arrived"].includes(o.status)))?(pendingQuote&&pendingQuote.oid===o.id&&(pendingQuote.meta||{}).kind==="invoice"?invoiceBox(o,pendingQuote):quoteBox(o)):""}
     <div class="panel sec" id="acts">${actionsHtml(o,{editMain,canBatch})}</div>
     <div class="panel sec"><h2>سجل الحركة</h2><ul class="log">
       ${(o.history||[]).slice().reverse().map(h=>`<li><time>${fmtD(h.at)}</time>${h.s?pill(h.s):""}<span class="sub">${esc(ROLE_T[h.role]||"")}</span>${who(h.by)}${h.note?`<span class="sub">— ${esc(h.note)}</span>`:""}</li>`).join("")}
     </ul></div>
    </div></aside>`;
+  syncQiSum();
 }
 function quoteBox(o){
   const pq=pendingQuote&&pendingQuote.oid===o.id?pendingQuote:null;
@@ -497,6 +512,40 @@ function quoteBox(o){
       <label class="row" style="font-size:13px"><input type="checkbox" id="qAddExtra" checked> أضفها للطلبية</label>`:""}
     <div class="row"><button class="primary" id="applyQuote">${isInv?"تطبيق الفاتورة":"تطبيق التسعيرة"}${o.status==="requested"||o.status==="priced"?(isInv?" وتعليم: تأكدت":(o.status==="requested"?" وتعليم: تسعّرت":"")):""}</button><button class="ghost" id="dropQuote">إلغاء</button></div></div>`;
 }
+function matchInvoice(o,list){
+  const items=o.items||[], taken={}; // extra qty assigned per item in this pass
+  return list.map((q,k)=>{ const key=keyPN(q.pn);
+    const cand=items.map((it,i)=>({it,i})).filter(c=>active(c.it)&&keyPN(c.it.pn)===key);
+    const cand2=cand.length?cand:items.map((it,i)=>({it,i})).filter(c=>active(c.it)&&baseA(keyPN(c.it.pn))===baseA(key));
+    let pick=cand2.find(c=>eff(c.it)-invOf(o,c.i)-(taken[c.i]||0)>0)||cand2[0];
+    if(!pick) return {k,q,i:-1};
+    const prev=invOf(o,pick.i)+(taken[pick.i]||0); taken[pick.i]=(taken[pick.i]||0)+N(q.qty);
+    return {k,q,i:pick.i,prev,over:prev+N(q.qty)>N(pick.it.qty),near:keyPN(pick.it.pn)!==key};
+  });
+}
+function invoiceBox(o,pq){
+  const m=pq.meta||{}; pq.inv=pq.inv||matchInvoice(o,pq.list); if(!pq.sel) pq.sel=new Set(pq.inv.map(r=>r.k));
+  const items=o.items||[], dupInv=m.invoiceNo&&invNos(o).includes(m.invoiceNo);
+  const cnt={}; pq.list.forEach(q=>{const k=keyPN(q.pn); cnt[k]=(cnt[k]||0)+1});
+  const webWarn=m.web&&normWeb(m.web)!==normWeb(o.web)?`<div class="banner">رقم الويب بالفاتورة <b class="num">${esc(m.web)}</b> يختلف عن هذي الطلبية <b class="num">${esc(o.web)}</b> — تأكد إنك على الطلبية الصحيحة.</div>`:"";
+  const newCnt=pq.inv.filter(r=>r.i<0).length, overCnt=pq.inv.filter(r=>r.over).length, dupCnt=Object.values(cnt).filter(n=>n>1).length;
+  return `<div class="panel sec"><h2>إضافة فاتورة للويب: ${esc(pq.name)}</h2>${webWarn}
+    ${dupInv?`<div class="banner">الفاتورة <b class="num">${esc(m.invoiceNo)}</b> مضافة قبل على هذا الويب. تقدر تكمل لو تبي تضيفها مرة ثانية.</div>`:""}
+    <div class="row" style="gap:6px 18px"><span class="sub">رقم الفاتورة: <b class="num">${esc(m.invoiceNo||"—")}</b></span><span class="sub">رقم الويب: <b class="num">${esc(m.web||"—")}</b></span>${m.date?`<span class="sub">التاريخ: <b class="num">${esc(m.date)}</b></span>`:""}${m.net!=null?`<span class="sub">صافي الفاتورة شامل الضريبة: <b class="num">${money(m.net)}</b></span>`:""}</div>
+    <div class="row"><span class="flag ok">${pq.inv.length-newCnt} بالطلبية</span>${newCnt?`<span class="flag info">${newCnt} مو بالطلبية (تنضاف)</span>`:""}${overCnt?`<span class="flag warn">${overCnt} أكثر من المطلوب</span>`:""}${dupCnt?`<span class="flag warn">${dupCnt} رقم مكرر بالفاتورة</span>`:""}</div>
+    <p class="hint">كل الأصناف محددة. شيل علامة أي رقم ما تبيه ينضاف (مثلاً تالف أو ما وصل)، والباقي ينربط بالويب ${esc(o.web)}.</p>
+    <div class="row"><button class="ghost mini" id="qiAll">تحديد الكل</button><button class="ghost mini" id="qiNone">إلغاء التحديد</button><span class="spacer"></span><span class="sub">المحدد: <b id="qiSum" class="num"></b></span></div>
+    <div class="tbl-wrap panel"><table><thead><tr><th></th><th>رقم القطعة</th><th>الاسم</th><th>الكمية</th><th>السعر</th><th>بالطلبية</th></tr></thead><tbody>
+    ${pq.inv.map(r=>{const it=r.i>=0?items[r.i]:null; return `<tr><td><input type="checkbox" data-qi="${r.k}" id="qi-${r.k}" ${pq.sel.has(r.k)?"checked":""} aria-label="إضافة ${esc(r.q.pn)}"></td>
+      <td class="pn">${esc(r.q.pn)}${cnt[keyPN(r.q.pn)]>1?` <span class="flag warn">مكرر</span>`:""}</td><td class="wrapcell">${esc(r.q.name||(it&&it.name)||"")}</td>
+      <td class="num">${r.q.qty}</td><td class="num">${r.q.price!=null?money(r.q.price):"—"}</td>
+      <td>${it?`<span class="sub">مطلوب ${it.qty}${r.prev?` · مفوتر قبل ${r.prev}`:""}</span>${r.near?` <span class="flag warn">شقيق ${esc(it.pn)}</span>`:""}${r.over?` <span class="flag warn">أكثر من المطلوب</span>`:""}`:`<span class="flag info">جديد</span>`}</td></tr>`}).join("")}
+    </tbody></table></div>
+    <label class="row" style="font-size:13px"><input type="checkbox" id="qiLast"> هذي آخر فاتورة للويب — اللي ما انفوتر يتعلّم «ما انرسل»</label>
+    <div class="row"><button class="primary" id="applyInvoice">إضافة الفاتورة للويب${["requested","priced"].includes(o.status)?" وتعليم: تأكدت":""}</button><button class="ghost" id="dropQuote">إلغاء</button></div></div>`;
+}
+function syncQiSum(){ const pq=pendingQuote; const el=$("#qiSum"); if(!pq||!pq.inv||!el) return;
+  const sel=pq.inv.filter(r=>pq.sel.has(r.k)); el.textContent=`${sel.length} من ${pq.inv.length} · ${money(sel.reduce((a,r)=>a+N(r.q.qty)*N(r.q.price),0))}` }
 function matchQuote(o,list){
   const items=o.items||[]; const used=new Set(); const res={matched:[],qtyChg:[],missing:[],extra:[],total:0,map:[]};
   const idx=k=>{let i=items.findIndex((it,x)=>!used.has(x)&&active(it)&&keyPN(it.pn)===k); if(i<0) i=items.findIndex((it,x)=>!used.has(x)&&active(it)&&baseA(keyPN(it.pn))===baseA(k)); return i};
@@ -512,7 +561,8 @@ function actionsHtml(o,e){
   if(e.editMain) b.push(`<button id="saveItems">حفظ التعديلات</button>`);
   if(o.status==="requested"&&owner) b.push(`<button class="primary" data-st="priced">حفظ وتعليم: تسعّرت</button>`);
   if(o.status==="priced"&&owner) b.push(`<button class="primary" data-st="confirmed">تأكدت من الوكالة</button>`);
-  if(e.canBatch) b.push(`<button id="fillAll">كل الباقي وصل</button>`,`<button class="primary" id="saveBatch">تسجيل الدفعة الواصلة</button>`);
+  if(e.canBatch){ invList(o).forEach((v,k)=>b.push(`<button data-fillinv="${k}">الدفعة = فاتورة ${esc(v.no||k+1)}</button>`));
+    b.push(`<button id="fillAll">كل الباقي وصل</button>`,`<button class="primary" id="saveBatch">تسجيل الدفعة الواصلة</button>`); }
   if(OPEN.has(o.status)&&owner) b.push(`<span class="spacer"></span><button class="danger" id="cancelO">إلغاء الطلبية</button>`);
   if(o.status==="cancelled"&&owner) b.push(`<button data-st="requested">إعادة فتحها</button>`);
   const nx=nextAction(o);
@@ -528,9 +578,9 @@ function readEdits(o){
 }
 function readMeta(){const r={}; if($("#eCust")) r.customer=$("#eCust").value.trim(); if($("#eExp")) r.expected=$("#eExp").value; if($("#eNote")) r.note=$("#eNote").value.trim(); return r}
 function arrivalStatus(o,items,shipments){
-  const t={...o,items,shipments}; const act=items.map((it,i)=>[it,i]).filter(([it])=>active(it));
-  if(!act.length) return o.status;
-  const all=act.every(([it,i])=>recvOf(t,i)>=N(it.qty)), any=act.some(([,i])=>recvOf(t,i)>0);
+  const t={...o,items,shipments}; const act=items.map((it,i)=>[it,i]).filter(([it])=>active(it)&&eff(it)>0);
+  if(!act.length) return shipments.length?(shipments.every(s=>s.enteredAt)?"entered":"arrived"):o.status;
+  const all=act.every(([it,i])=>recvOf(t,i)>=eff(it)), any=act.some(([,i])=>recvOf(t,i)>0);
   if(all) return shipments.length&&shipments.every(s=>s.enteredAt)?"entered":"arrived";
   return any?"partial":o.status;
 }
@@ -538,7 +588,7 @@ async function writeOrder(o,patch,hist){
   if(!db){toast("غير متصل — سجّل الدخول من جديد");return false}
   const now=new Date().toISOString();
   const data={...patch,updatedAt:now};
-  if(hist) data.history=[...(o.history||[]),{at:now,by:myId,role,...hist}];
+  if(hist){ const h={at:now,by:myId,role}; Object.keys(hist).forEach(k=>{ if(hist[k]!==undefined) h[k]=hist[k] }); data.history=[...(o.history||[]),h] }
   try{ await db.collection("orders").doc(o.id).update(data); return true }
   catch(e){ toast(e&&/permission/.test(e.code||"")?"ما عندك صلاحية لهذا الإجراء":"تعذّر الحفظ: "+(e&&e.message||"")); return false }
 }
@@ -546,12 +596,13 @@ async function setStatus(o,s,extra={},note){ if(await writeOrder(o,{status:s,...
 
 async function saveNew(){
   const web=draft.web.trim(); if(!web||!draft.items.length) return;
-  if(orders.some(o=>normWeb(o.web)===normWeb(web))){toast("رقم الويب مستخدم");return}
+  const btnS=$("#saveNew");
+  if(orders.some(o=>normWeb(o.web)===normWeb(web))&&btnS&&!armConfirm(btnS,"الويب موجود — اضغط مرة ثانية لحفظها طلبية منفصلة")) return;
   const items=draft.items.filter(i=>normPN(i.pn)).map(i=>({pn:normPN(i.pn),name:(i.name||"").trim(),qty:N(i.qty),price:i.price===""||i.price==null?null:Number(i.price),cust:(i.cust||"").trim(),st:"active"}));
   const now=new Date().toISOString();
-  const safe=normWeb(web).replace(/[^A-Za-z0-9_\-.~:@+]/g,"_"); const id=/^[._]*$/.test(safe)?"o"+Date.now():"w-"+safe;
+  const safe=normWeb(web).replace(/[^A-Za-z0-9_\-.~:@+]/g,"_"); let id=/^[._]*$/.test(safe)?"o"+Date.now():"w-"+safe; if(orders.some(o=>o.id===id)) id+="-"+Date.now().toString(36);
   const body={web,kind:draft.kind,supplier:draft.supplier.trim(),customer:draft.customer.trim(),expected:draft.expected,note:draft.note.trim(),quotes:draft.quotes,
-    ...(draft.meta&&draft.meta.kind==="invoice"?{agencyInvoice:{no:draft.meta.invoiceNo||"",date:draft.meta.date||"",parts:draft.meta.parts??null,vat:draft.meta.vat??null,net:draft.meta.net??null,file:draft.srcFile?draft.srcFile.name:"",at:now}}:{}),
+    ...(draft.meta&&draft.meta.kind==="invoice"?{invoices:[{no:draft.meta.invoiceNo||"",date:draft.meta.date||"",parts:draft.meta.parts??null,vat:draft.meta.vat??null,net:draft.meta.net??null,file:draft.srcFile?draft.srcFile.name:"",at:now,by:myId,lines:items.map((it,i)=>({i,qty:it.qty,price:it.price}))}]}:{}),
     items,shipments:[],status:draft.meta&&draft.meta.kind==="invoice"?"confirmed":"requested",createdAt:now,updatedAt:now,createdBy:myId,history:[{s:draft.meta&&draft.meta.kind==="invoice"?"confirmed":"requested",at:now,by:myId,role,...(draft.meta&&draft.meta.invoiceNo?{note:"من فاتورة الوكالة "+draft.meta.invoiceNo}:{})}]};
   if(draft.srcFile&&!draft.quotes.some(q=>q.name===draft.srcFile.name||q.name===draft.srcFile.name.replace(/\.xlsx?$/i,".csv"))){ const up=await uploadQuote(draft.srcFile); if(up) body.quotes=[...body.quotes,up] }
   const btn=$("#saveNew"); if(btn) btn.disabled=true;
@@ -579,7 +630,7 @@ const PDFX = (()=>{
   const PN = /^N?[A-Z0-9]{2,6}-?[A-Z0-9]{3,8}$/;
   const isPN = s => PN.test(s) && /\d/.test(s) && (s[0]==="N"||/[A-Z]/.test(s)) && s.replace(/-/g,"").length>=9 && !/^\d+$/.test(s);
   const num = s => { const t=String(s).replace(/[\s,]/g,"").replace(/[A-Z]+$/i,""); return /^-?\d+(\.\d+)?$/.test(t)?Number(t):null };
-  const ar = s => s.normalize("NFKC").replace(/ی/g,"ي").replace(/ک/g,"ك").replace(/ھ/g,"ه").replace(/\s+/g," ").trim();
+  const ar = s => s.normalize("NFKC").replace(/ی/g,"ي").replace(/ک/g,"ك").replace(/ھ/g,"ه").replace(/\u0640/g,"").replace(/\s+/g," ").trim();
   const hasAr = s => /[؀-ۿﭐ-﻿]/.test(s);
   function below(items, re, maxDx=18){
     const h=items.find(i=>re.test(i.s)); if(!h) return "";
@@ -617,7 +668,7 @@ const PDFX = (()=>{
         const left=row.filter(i=>i.x<a.x).sort((p,q)=>q.x-p.x);
         const lineNo=(left.find(i=>/^\d{1,4}$/.test(i.s))||{}).s||"";
         const nums=row.filter(i=>i.x>a.x).sort((p,q)=>p.x-q.x).map(i=>({x:i.x,n:num(i.s)})).filter(o=>o.n!=null);
-        const desc=row.filter(i=>i.x>a.x&&num(i.s)==null&&!/^(EA|S|Z|E)$/.test(i.s)&&!hasAr(i.s)).sort((p,q)=>p.x-q.x).map(i=>i.s).join(" ");
+        const desc=row.filter(i=>i.x>a.x&&num(i.s)==null&&!/^(EA|S|Z|E)$/.test(i.s)&&!/\bcopy\b/i.test(i.s)&&!hasAr(i.s)).sort((p,q)=>p.x-q.x).map(i=>i.s).join(" ");
         const arName=items.filter(i=>hasAr(i.s)&&i.y<a.y-4&&i.y>a.y-17&&i.x>a.x&&i.x<a.x+200).map(i=>ar(i.s)).join(" ");
         if(!nums.length) continue;
         let qty=nums[0].n, unit=null, disc=null, net=null;
@@ -683,8 +734,9 @@ function parseRows(rows){
   return out;
 }
 function mergeDraft(list){
-  let added=0; for(const it of list){ const ex=draft.items.find(i=>keyPN(i.pn)===keyPN(it.pn)); if(ex){ex.qty=N(ex.qty)+it.qty} else {draft.items.push(it);added++} }
-  toast(`أُضيف ${added} صنف${list.length-added?` ودُمج ${list.length-added} مكرر`:""}`); render();
+  const had=new Set(draft.items.map(i=>keyPN(i.pn))); let rep=0;
+  for(const it of list){ if(had.has(keyPN(it.pn))) rep++; had.add(keyPN(it.pn)); draft.items.push(it) }
+  toast(`أُضيف ${list.length} سطر${rep?` · فيه ${rep} رقم مكرر (تنبيه بس)`:""}`); render();
 }
 async function readRows(f,cb){
   try{ const r=await readAgency(f); cb(r.list,r.meta) }catch(e){ toast(e&&e.message||"تعذّر قراءة الملف") }
@@ -703,7 +755,7 @@ async function exportXlsx(kind){
   let rows;
   if(kind==="queue") rows=[["رقم القطعة","الاسم","باقي ما وصل","واصل بانتظار الإدخال","رقم الويب","العميل","الحالة","تاريخ الطلب"],...queueRows().map(r=>[r.it.pn,r.it.name||"",r.out,r.pend,r.o.web,r.it.cust||r.o.customer||"",ST[r.o.status].t,fmtDay(r.o.createdAt)])];
   else { rows=[["رقم الويب","فاتورة الوكالة","النوع","العميل","تاريخ الطلب","الوصول المتوقع","حالة الطلبية","رقم القطعة","الاسم","حالة القطعة","الكمية","السعر","الإجمالي","الواصل"]];
-    orders.forEach(o=>(o.items||[]).forEach((i,x)=>rows.push([o.web,(o.agencyInvoice||{}).no||"",KIND_T[o.kind||"local"],i.cust||o.customer||"",fmtDay(o.createdAt),o.expected?fmtDay(o.expected):"",ST[o.status].t,i.pn,i.name||"",i.st==="na"?"غير متوفر":i.st==="removed"?"محذوفة":"",i.qty,i.price??"",i.price&&active(i)?i.qty*i.price:"",recvOf(o,x)]))) }
+    orders.forEach(o=>(o.items||[]).forEach((i,x)=>rows.push([o.web,invNos(o).join(" / "),KIND_T[o.kind||"local"],i.cust||o.customer||"",fmtDay(o.createdAt),o.expected?fmtDay(o.expected):"",ST[o.status].t,i.pn,i.name||"",i.st==="na"?"غير متوفر":i.st==="removed"?"محذوفة":N(i.cut)>0?"ما انرسل "+N(i.cut):"",i.qty,i.price??"",i.price&&active(i)?i.qty*i.price:"",recvOf(o,x)]))) }
   const wb=XLSX.utils.book_new(); const ws=XLSX.utils.aoa_to_sheet(rows); ws["!cols"]=rows[0].map(()=>({wch:16})); wb.Workbook={Views:[{RTL:true}]};
   XLSX.utils.book_append_sheet(wb,ws,kind==="queue"?"الانتظار":"الطلبيات");
   const buf=XLSX.write(wb,{type:"array",bookType:"xlsx"});
@@ -727,6 +779,17 @@ document.addEventListener("click",async ev=>{
   if(o&&t.dataset.rm!=null){ if(!armConfirm(t,"تأكيد الحذف")) return; const x=+t.dataset.rm; const items=o.items.map(i=>({...i})); items[x].st="removed";
     const st=["partial"].includes(o.status)?arrivalStatus(o,items,o.shipments||[]):o.status;
     if(await writeOrder(o,{items,status:st},{note:`حذف ${items[x].pn} من الطلبية`, ...(st!==o.status?{s:st}:{})})) toast("انحذفت القطعة من الطلبية"); return }
+  if(o&&t.dataset.cut!=null){ const x=+t.dataset.cut; if(!armConfirm(t,"تأكيد: ما انرسلت")) return; const items=o.items.map(i=>({...i})); const it=items[x];
+    const got=Math.max(invList(o).length?invOf(o,x):0,recvOf(o,x)); it.cut=Math.max(N(it.qty)-got,0);
+    const st=["partial","arrived"].includes(o.status)||(o.shipments||[]).length?arrivalStatus(o,items,o.shipments||[]):o.status;
+    if(await writeOrder(o,{items,status:st},{note:`${it.pn}: ما انرسل ${it.cut} (تالف/ما حصلوه)`,...(st!==o.status?{s:st}:{})})) toast("تعلّمت: ما انرسلت"); return }
+  if(o&&t.dataset.uncut!=null){ const x=+t.dataset.uncut; const items=o.items.map(i=>({...i})); const c=items[x].cut; items[x].cut=0;
+    const st=(o.shipments||[]).length?arrivalStatus(o,items,o.shipments||[]):o.status;
+    if(await writeOrder(o,{items,status:st},{note:`${items[x].pn}: رجعت منتظرة (${c})`,...(st!==o.status?{s:st}:{})})) toast("رجعت للانتظار"); return }
+  if(o&&t.dataset.delinv!=null){ if(!armConfirm(t,"تأكيد حذف الفاتورة")) return; const k=+t.dataset.delinv; const inv=[...(o.invoices||[])]; const [d]=inv.splice(k,1);
+    if(await writeOrder(o,{invoices:inv},{note:"حذف فاتورة "+(d&&d.no||"")})) toast("انحذفت الفاتورة"); return }
+  if(o&&t.dataset.fillinv!=null){ const v=invList(o)[+t.dataset.fillinv]; if(!v) return; const add={}; (v.lines||[]).forEach(l=>add[l.i]=(add[l.i]||0)+N(l.qty));
+    document.querySelectorAll("[data-b]").forEach(inp=>{const i=+inp.dataset.b; inp.value=add[i]?Math.min(add[i],N(inp.max)):""}); toast("تعبّت كميات الفاتورة — راجعها وسجّل الدفعة"); return }
   if(o&&t.dataset.restore!=null){ const x=+t.dataset.restore; const items=o.items.map(i=>({...i})); items[x].st="active";
     if(await writeOrder(o,{items},{note:`إرجاع ${items[x].pn}`})) toast("رجعت القطعة"); return }
   if(o&&t.dataset.enter!=null){ const si=+t.dataset.enter; const inv=($("#inv-"+si)?.value||"").trim();
@@ -740,13 +803,33 @@ document.addEventListener("click",async ev=>{
     case "runChk": checkText=$("#chk").value; return runCheck();
     case "clrChk": checkText=""; return render();
     case "addPaste": { const v=$("#paste").value; const rows=v.split(/\r?\n/).filter(l=>l.trim()).map(l=>l.includes("\t")?l.split("\t"):l.split(/\s{2,}|,|;/).length>1?l.split(/\s{2,}|,|;/):l.trim().split(/\s+/));
-      const list=parseRows(rows); if(!list.length){toast("ما لقيت أرقام قطع");return} return mergeDraft(list) }
+      const list=parseRows(rows); if(!list.length){toast("ما لقيت أرقام قطع");return} draft.paste=""; return mergeDraft(list) }
     case "addRow": draft.items.push({pn:"",name:"",qty:1,price:null,cust:""}); return render();
     case "resetDraft": draft=blankDraft(); return render();
     case "saveNew": return saveNew();
     case "dropQuote": pendingQuote=null; return renderDrawer();
+    case "qiAll": if(pendingQuote&&pendingQuote.inv){ pendingQuote.inv.forEach(r=>pendingQuote.sel.add(r.k)); document.querySelectorAll("[data-qi]").forEach(c=>c.checked=true); syncQiSum() } return;
+    case "qiNone": if(pendingQuote&&pendingQuote.inv){ pendingQuote.sel.clear(); document.querySelectorAll("[data-qi]").forEach(c=>c.checked=false); syncQiSum() } return;
+    case "applyInvoice": { const pq=pendingQuote; if(!o||!pq||!pq.inv) return; const m=pq.meta||{};
+      const rows=pq.inv.filter(r=>pq.sel.has(r.k)); if(!rows.length){toast("حدّد صنف واحد على الأقل");return}
+      if(m.invoiceNo&&invNos(o).includes(m.invoiceNo)&&!armConfirm(t,"مضافة قبل — اضغط مرة ثانية للإضافة")) return;
+      const fresh=matchInvoice(o,pq.list).filter(r=>pq.sel.has(r.k));
+      const items=o.items.map(i=>({...i})), lines=[];
+      for(const r of fresh){ let i=r.i;
+        if(i<0){ items.push({pn:r.q.pn,name:r.q.name||"",qty:N(r.q.qty),price:r.q.price,cust:"",st:"active",fromInvoice:true}); i=items.length-1 }
+        else { const it=items[i]; if(r.q.price!=null) it.price=r.q.price; if(!it.name&&r.q.name) it.name=r.q.name; if(r.q.list!=null) it.list=r.q.list; if(r.q.disc!=null) it.disc=r.q.disc;
+          const tot=N(r.prev)+N(r.q.qty); if(tot>N(it.qty)) it.qty=tot; if(N(it.cut)&&tot>N(it.qty)-N(it.cut)) it.cut=Math.max(N(it.qty)-tot,0); }
+        lines.push({i,qty:N(r.q.qty),price:r.q.price}) }
+      const prevInv=invList(o), newInv={no:m.invoiceNo||"",date:m.date||"",parts:Math.round(lines.reduce((a,l)=>a+N(l.qty)*N(l.price),0)*100)/100,vat:rows.length===pq.inv.length?(m.vat??null):null,net:rows.length===pq.inv.length?(m.net??null):null,partial:rows.length<pq.inv.length,file:pq.name,at:new Date().toISOString(),by:myId,lines};
+      if($("#qiLast")&&$("#qiLast").checked){ const tmp={...o,items,invoices:[...prevInv,newInv]};
+        items.forEach((it,i)=>{ if(!active(it)) return; const got=Math.max(invOf(tmp,i),recvOf(o,i)); if(got<N(it.qty)) it.cut=N(it.qty)-got }) }
+      t.disabled=true; const up=isOwner&&pq.file?await uploadQuote(pq.file):null;
+      const st=["requested","priced"].includes(o.status)?"confirmed":arrivalStatus(o,items,o.shipments||[]);
+      const note=`فاتورة ${m.invoiceNo||pq.name}: ${lines.length} صنف${rows.length<pq.inv.length?` (شيل ${pq.inv.length-rows.length})`:""}${fresh.some(r=>r.i<0)?` · ${fresh.filter(r=>r.i<0).length} جديد`:""}`;
+      if(await writeOrder(o,{items,invoices:[...prevInv,newInv],agencyInvoice:null,status:st,...(up?{quotes:[...(o.quotes||[]),up]}:{})},{...(st!==o.status?{s:st}:{}),note})){ pendingQuote=null; toast("انضافت الفاتورة للويب "+o.web) } else t.disabled=false;
+      return }
     case "applyToExisting": { const ex=orders.find(x=>normWeb(x.web)===normWeb(draft.web)); if(!ex) return;
-      const list=draft.items.map(i=>({...i,pn:normPN(i.pn)})); pendingQuote={oid:ex.id,name:draft.srcFile?draft.srcFile.name:"ملف",file:draft.srcFile||new Blob([""]),list,meta:draft.meta||{kind:"quote"},res:matchQuote(ex,list)};
+      const list=draft.items.filter(i=>normPN(i.pn)).map(i=>({...i,pn:normPN(i.pn)})); pendingQuote={oid:ex.id,name:draft.srcFile?draft.srcFile.name:"ملف",file:draft.srcFile||null,list,meta:draft.meta||{kind:"quote"},res:matchQuote(ex,list)};
       draft=blankDraft(); tab="orders"; openId=ex.id; render(); return }
     case "applyQuote": { if(!o||!pendingQuote) return; const pq=pendingQuote, r=matchQuote(o,pq.list);
       const items=o.items.map(i=>({...i}));
@@ -779,16 +862,18 @@ document.addEventListener("input",ev=>{
   if(t.id==="q"){q=t.value;render();return}
   const map={nWeb:"web",nSup:"supplier",nCust:"customer",nNote:"note",nExp:"expected",nKind:"kind"};
   if(map[t.id]){draft[map[t.id]]=t.value; if(t.id==="nWeb") syncSave(); return}
+  if(t.id==="paste"){draft.paste=t.value;return}
   if(t.dataset.d!=null){const i=draft.items[+t.dataset.d]; const f=t.dataset.f; i[f]=f==="qty"||f==="price"?(t.value===""?null:Number(t.value)):t.value;}
 });
 document.addEventListener("change",async ev=>{
   const t=ev.target;
   if(t.id==="flt"){filter=t.value;render();return}
+  if(t.dataset.qi!=null&&pendingQuote&&pendingQuote.sel){ const k=+t.dataset.qi; t.checked?pendingQuote.sel.add(k):pendingQuote.sel.delete(k); syncQiSum(); return }
   if(t.id==="nKind"){draft.kind=t.value; if(t.value==="external"&&/بن ضباب/.test(draft.supplier)) {draft.supplier="";render()} return}
   if(t.id==="file"&&t.files[0]){readFile(t.files[0]);t.value="";return}
   if(t.id==="quoteXls"&&t.files[0]){ const f=t.files[0]; t.value=""; const o=orders.find(x=>x.id===openId); if(!o) return;
-    readRows(f,(list,meta)=>{ pendingQuote={oid:o.id,name:f.name,file:f,list,meta,res:matchQuote(o,list)}; renderDrawer() }); return }
-  if(t.id==="nWeb"){render();return}
+    readRows(f,(list,meta)=>{ pendingQuote={oid:o.id,name:f.name,file:f,list,meta,res:matchQuote(o,list)}; renderDrawer().then(syncQiSum) }); return }
+  if(t.id==="nWeb"){const wb=$("#webBanner"); if(wb) wb.innerHTML=webBannerHtml(); return}
   if(t.id==="qFileNew"&&t.files[0]){const file=t.files[0]; t.value=""; if(/\.(xlsx?|csv)$/i.test(file.name)&&!draft.items.length) readFile(file); const f=await uploadQuote(file); if(f){draft.quotes.push(f);render();toast("انرفق الملف")} return}
   if(t.id==="qFile"&&t.files[0]){const o=orders.find(x=>x.id===openId); const f=await uploadQuote(t.files[0]); t.value=""; if(o&&f&&await writeOrder(o,{quotes:[...(o.quotes||[]),f]},{note:"إرفاق "+f.name})) toast("انرفق الملف"); return}
   if(t.dataset.d!=null&&t.dataset.f==="pn"){renderDraftTbl();syncSave()}
