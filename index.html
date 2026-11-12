@@ -185,6 +185,7 @@ a{color:var(--accent)}
     <button class="tab" role="tab" data-tab="orders" aria-selected="true">الطلبيات</button>
     <button class="tab" role="tab" data-tab="queue" aria-selected="false">قائمة الانتظار (القطع)</button>
     <button class="tab" role="tab" data-tab="check" aria-selected="false">فحص قبل الطلب</button>
+    <button class="tab" role="tab" data-tab="sup" aria-selected="false">طلبيات الموردين</button>
     <button class="tab" role="tab" data-tab="new" aria-selected="false" id="tabNew">+ طلبية جديدة</button>
   </nav>
   <main id="main"></main>
@@ -210,7 +211,7 @@ const ROLE_T = {owner:"المدير", store:"المستودع", entry:"مدخل 
 const KIND_T = {local:"وكالة", external:"طلبية خارجية"};
 
 let db=null, assets=true, myId=null, isOwner=false, canWrite=true; let unsub=null;
-let orders=[]; let loaded=false; let tab="orders"; let filter="open"; let openId=null; let q="";
+let orders=[]; let sorders=[]; let loaded=false; let tab="orders"; let filter="open"; let openId=null; let q="";
 const blankDraft=()=>({web:"",kind:"local",supplier:"بترومين — بن ضباب",customer:"",expected:"",note:"",items:[],quotes:[]});
 let draft=blankDraft();
 let role="store";
@@ -267,12 +268,15 @@ function render(){
   $("#tabNew").hidden=role!=="owner";
   const m=$("#main");
   if(!loaded){m.innerHTML=`<div class="panel empty"><h3>جارٍ تحميل الطلبيات…</h3></div>`;return}
-  if(q.trim()) renderSearch(m);
+  $("#stages").hidden=tab==="sup";
+  if(tab==="sup"&&typeof renderSup==="function") renderSup(m);
+  else if(q.trim()) renderSearch(m);
   else if(tab==="orders") renderOrders(m);
   else if(tab==="queue") renderQueue(m);
   else if(tab==="check") renderCheck(m);
   else renderNew(m);
   renderDrawer();
+  if(typeof renderSupDrawer==="function") renderSupDrawer();
 }
 function renderStages(){
   const cnt={}; orders.forEach(o=>cnt[o.status]=(cnt[o.status]||0)+1);
@@ -344,7 +348,7 @@ function runCheck(){
      <span class="flag bad">بالانتظار: ${inQ.length}</span><span class="flag warn">مطابقة محتملة: ${near.length}</span><span class="flag ok">جديد: ${fresh.length}</span>
      <span class="spacer"></span>${fresh.length?`<button id="copyFresh">نسخ الأرقام الجديدة</button>`:""}</div>
    <div class="tbl-wrap panel"><table><thead><tr><th>رقم القطعة</th><th>النتيجة</th><th>التفاصيل</th></tr></thead><tbody>
-   ${res.map(r=>{ const na=r.na.length?`<br><span class="flag info">سبق وطلع غير متوفر بالوكالة · ويب ${esc(r.na[r.na.length-1].o.web)}</span>`:"";
+   ${res.map(r=>{ const na=(r.na.length?`<br><span class="flag info">سبق وطلع غير متوفر بالوكالة · ويب ${esc(r.na[r.na.length-1].o.web)}</span>`:"")+(typeof supPending==="function"?supPending(r.pn).map(x=>`<br><span class="flag warn">بطلبية مورد ${esc(x.o.supplier||"")} (${esc(x.o.ref||"")}) · باقي ${x.rem}</span>`).join(""):"");
      if(r.exact.length) return `<tr><td class="pn">${esc(r.pn)}</td><td><span class="flag bad">موجود بالانتظار</span></td><td class="wrapcell">${r.exact.map(x=>`ويب <span class="pn">${esc(x.o.web)}</span> · ${ST[x.o.status].t} · باقي ${x.out}${x.pend?` · واصل ${x.pend} بانتظار الإدخال`:""}`).join("<br>")}${na}</td></tr>`;
      if(r.near.length) return `<tr><td class="pn">${esc(r.pn)}</td><td><span class="flag warn">مطابقة محتملة</span></td><td class="wrapcell">${r.near.map(x=>`<span class="pn">${esc(x.it.pn)}</span> بويب <span class="pn">${esc(x.o.web)}</span> · ${ST[x.o.status].t}`).join("<br>")}${na}</td></tr>`;
      return `<tr><td class="pn">${esc(r.pn)}</td><td><span class="flag ok">غير موجود</span></td><td class="sub wrapcell">ما فيه طلبية مفتوحة لهذا الرقم${na}</td></tr>`}).join("")}
@@ -915,7 +919,8 @@ if(!window.APP_CONFIG||!APP_CONFIG.firebase||!APP_CONFIG.firebase.apiKey){
     $("#login").hidden=true; $("#app").hidden=false; $("#lPass").value="";
     render();
     unsub=db.collection("orders").onSnapshot(snap=>{
-      orders=snap.docs.map(d=>({id:d.id,...d.data()}));
+      const all=snap.docs.map(d=>({id:d.id,...d.data()}));
+      orders=all.filter(o=>o.type!=="supplier"); sorders=all.filter(o=>o.type==="supplier");
       loaded=true;
       const a=document.activeElement; const editing=a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&a.id!=="q";
       if(editing){ renderStages(); if(tab==="new") renderDraftTbl(); return }
@@ -924,5 +929,6 @@ if(!window.APP_CONFIG||!APP_CONFIG.firebase||!APP_CONFIG.firebase.apiKey){
   });
 }
 </script>
+<script src="supplier.js?v=1"></script>
 </body>
 </html>
